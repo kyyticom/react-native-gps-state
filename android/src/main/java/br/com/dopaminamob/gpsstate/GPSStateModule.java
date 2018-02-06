@@ -126,13 +126,25 @@ public class GPSStateModule extends ReactContextBaseJavaModule implements Activi
 	
 	int getGpsState(){
 		int status = STATUS_NOT_DETERMINED;
-		boolean enabled = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER);
-		
+
+		boolean gpsProviderEnabled = false;
+		boolean networkProviderEnabled = false;
+
+		try {
+			gpsProviderEnabled = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER);
+		} catch (SecurityException ex) {
+		}
+
+		try {
+			networkProviderEnabled = locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
+		} catch (SecurityException ex) {
+		}
+
 		//TODO check permission to inform the correct status
 		if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M || targetSdkVersion >= Build.VERSION_CODES.M) {
 			int permission = ActivityCompat.checkSelfPermission(getReactApplicationContext(), Manifest.permission.ACCESS_FINE_LOCATION);
 			boolean isGranted = permission == PackageManager.PERMISSION_GRANTED;
-			if(enabled) {
+			if(gpsProviderEnabled || networkProviderEnabled) {
 				if(isGranted){
 					status = STATUS_AUTHORIZED;
 				}else{
@@ -142,7 +154,7 @@ public class GPSStateModule extends ReactContextBaseJavaModule implements Activi
 				status = STATUS_RESTRICTED;
 			}
 		}else{
-			status = (enabled ? STATUS_AUTHORIZED : STATUS_RESTRICTED);
+			status = (gpsProviderEnabled || networkProviderEnabled ? STATUS_AUTHORIZED : STATUS_RESTRICTED);
 		}
 		
 		return status;
