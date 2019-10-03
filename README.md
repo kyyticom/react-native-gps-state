@@ -10,10 +10,51 @@ This lib will emitevent wheneaver the GPS status change, like when the permissio
 2. Link library to project
    - `react-native link react-native-gps-state`
 
-### Usage 
+If the link fails, do a manual setup:
+
+#### Android
+
+**android/settings.gradle**
+
+```gradle
+include ':react-native-gps-state'
+project(':react-native-gps-state').projectDir = new File(rootProject.projectDir, '../node_modules/react-native-gps-state/android')
+```
+
+**android/app/build.gradle**
+
+```gradle
+dependencies {
+   ...
+   compile project(':react-native-gps-state')
+}
+```
+
+**MainApplication.java**
+
+On top, where imports are:
+
+```java
+import br.com.dopaminamob.gpsstate.GPSStatePackage;
+```
+
+Add the `new GPSStatePackage()` class to your list of exported packages.
+
+```java
+@Override
+protected List<ReactPackage> getPackages() {
+    return Arrays.asList(
+            new MainReactPackage(),
+            new GPSStatePackage(),
+    );
+}
+```
+
+
+### Usage
 
 ### Constants
-| Platform 			| Status Code 	| Constant 				| Description 		
+| Platform 			| Status Code 	| Constant 				| Description
 | :--- 				| :---:			| :--- 					| :---
 | IOS/Android		| 0 	 		| NOT_DETERMINED 		| The user has not yet made a choice regarding whether this app can use location services.
 | IOS/Android		| 1 	 		| RESTRICTED 			| This app is not authorized to use location services.
@@ -25,35 +66,63 @@ This lib will emitevent wheneaver the GPS status change, like when the permissio
 
 #### Methods
 ```javascript
-//Open the system Settings to enable user to toggle Location on
-GPSState.openSettings();
+//Open a system dialog requesting permission
+//authType could be one of `AUTHORIZED_ALWAYS` or `AUTHORIZED_WHENINUSE`
+GPSState.requestAuthorization(authType)
+```
+
+```javascript
+//Open the system Settings to enable user to toggle Location on.
+GPSState.openLocationSettings()
+```
+
+```javascript
+//Open the system Settings in app details, so the user could manage all permissions in the `Permissions` tab
+//in Android bellow M will fallback to `openLocationSettings()`
+GPSState.openAppDetails()
+```
+
+```javascript
+//ANDROID ONLY
+//return true if system version is Marshmallow or above
+GPSState.isMarshmallowOrAbove()
+```
+
+```javascript
+//return true if the location permission is granted
+GPSState.isAuthorized()
+```
+
+```javascript
+//return true if the location permission is denied
+GPSState.isDenied()
 ```
 
 ```javascript
 //Get the current GPS state
 GPSState.getStatus().then((status)=>{
 
-});
+})
 ```
 
 #### Listeners
 
 ```javascript
-import GPSState from 'react-native-gps-state';
+import GPSState from 'react-native-gps-state'
 ...
 componentWillMount(){
 	GPSState.addListener((status)=>{
 		switch(status){
 			case GPSState.NOT_DETERMINED:
-				alert('Please, allow the location, for us to do amazing things for you!');
+				alert('Please, allow the location, for us to do amazing things for you!')
 			break;
 
 			case GPSState.RESTRICTED:
-				GPSState.openSettings();
+				GPSState.openLocationSettings()
 			break;
 
 			case GPSState.DENIED:
-				alert('It`s a shame that you do not allowed us to use location :(');
+				alert('It`s a shame that you do not allowed us to use location :(')
 			break;
 
 			case GPSState.AUTHORIZED_ALWAYS:
@@ -64,10 +133,11 @@ componentWillMount(){
 				//TODO do something amazing with you app
 			break;
 		}
-	});
+	})
+	GPSState.requestAuthorization(GPSState.AUTHORIZED_WHENINUSE)
 }
 
 componentWillUnmount(){
-	GPSState.removeListener();
+	GPSState.removeListener()
 }
 ```

@@ -8,18 +8,13 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
-import android.location.GpsStatus;
-import android.location.Location;
-import android.location.LocationListener;
 import android.location.LocationManager;
+import android.net.Uri;
 import android.os.Build;
-import android.os.Bundle;
-import android.support.annotation.Nullable;
-import android.support.v4.app.ActivityCompat;
-import android.support.v4.content.PermissionChecker;
-import android.widget.Toast;
+import android.provider.Settings;
+import androidx.core.app.ActivityCompat;
 
-import com.facebook.react.bridge.ActivityEventListener;
+import com.facebook.react.ReactActivity;
 import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.ReactApplicationContext;
@@ -28,204 +23,211 @@ import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
 import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.modules.core.DeviceEventManagerModule;
+import com.facebook.react.modules.core.PermissionAwareActivity;
+import com.facebook.react.modules.core.PermissionListener;
 
-import java.lang.annotation.Annotation;
 import java.util.HashMap;
 import java.util.Map;
 
-/**
- * Created by neuber on 14/08/17.
- */
-public class GPSStateModule extends ReactContextBaseJavaModule implements ActivityCompat.OnRequestPermissionsResultCallback/*, ActivityEventListener, LocationListener, GpsStatus.Listener*/ {
-	private static final int STATUS_NOT_DETERMINED = 0;
-	private static final int STATUS_RESTRICTED = 1;
-	private static final int STATUS_DENIED = 2;
-	private static final int STATUS_AUTHORIZED = 3;
-	private static final int STATUS_AUTHORIZED_ALWAYS = 3;
-	private static final int STATUS_AUTHORIZED_WHENINUSE = 4;
-	
-	private static final int REQUEST_CODE_AUTHORIZATION = 1;
-	
-	private static final String EVENT_STATUS_CHANGE = "OnStatusChange";
-	
-	private boolean isListen = false;
-	private int targetSdkVersion = -1;
-	private BroadcastReceiver mGpsSwitchStateReceiver = null;
-	private LocationManager locationManager;
-	
-	public GPSStateModule(ReactApplicationContext reactContext) {
-		super(reactContext);
-		locationManager = (LocationManager) reactContext.getSystemService(reactContext.LOCATION_SERVICE);
-		
-		try {
-			final PackageInfo info = reactContext.getPackageManager().getPackageInfo(reactContext.getPackageName(), 0);
-			targetSdkVersion = info.applicationInfo.targetSdkVersion;
-		} catch (PackageManager.NameNotFoundException e) {
-			e.printStackTrace();
-		}
-	}
-	
-	@Override
-	public String getName() {
-		return "GPSState";
-	}
-	
-	
-	@Override
-	public Map<String, Object> getConstants() {
-		final Map<String, Object> constants = new HashMap<>();
-		constants.put("NOT_DETERMINED", STATUS_NOT_DETERMINED);
-		constants.put("RESTRICTED", STATUS_RESTRICTED);
-		constants.put("DENIED", STATUS_DENIED);
-		constants.put("AUTHORIZED", STATUS_AUTHORIZED);
-		constants.put("AUTHORIZED_ALWAYS", STATUS_AUTHORIZED_ALWAYS);
-		constants.put("AUTHORIZED_WHENINUSE", STATUS_AUTHORIZED_WHENINUSE);
-		return constants;
-	}
-	
-	
-	@ReactMethod
-	public void _startListen() {
-		_stopListen();
-		try {
-			mGpsSwitchStateReceiver = new GPSProvideChangeReceiver();
-			getReactApplicationContext().registerReceiver(mGpsSwitchStateReceiver, new IntentFilter(LocationManager.PROVIDERS_CHANGED_ACTION));
-			isListen = true;
-		}catch(Exception ex){}
-	}
-	
-	@ReactMethod
-	public void _stopListen() {
-		isListen = false;
-		try {
-			//locationManager.removeGpsStatusListener(this);
-			if (mGpsSwitchStateReceiver != null) {
-				getReactApplicationContext().unregisterReceiver(mGpsSwitchStateReceiver);
-				mGpsSwitchStateReceiver = null;
-			}
-		}catch(Exception ex){}
-	}
-	
-	@ReactMethod
-	public void _getStatus(Promise promise) {
-		promise.resolve( getGpsState() );
-	}
-	
-	@ReactMethod
-	public void _openSettings(){
-		Intent callGPSSettingIntent = new Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS);
-		getCurrentActivity().startActivityForResult(callGPSSettingIntent, 0);
-	}
-	
-	@ReactMethod
-	public void _requestAuthorization(){
-		ActivityCompat.requestPermissions(getCurrentActivity(), new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, REQUEST_CODE_AUTHORIZATION);
-	}
-	
-	
-	
-	int getGpsState(){
-		int status = STATUS_NOT_DETERMINED;
+public class GPSStateModule extends ReactContextBaseJavaModule /*implements ActivityEventListener, ActivityCompat.OnRequestPermissionsResultCallback , ActivityEventListener, LocationListener, GpsStatus.Listener*/ {
+    private static final int STATUS_NOT_DETERMINED = 0;
+    private static final int STATUS_RESTRICTED = 1; //Location is disabled
+    private static final int STATUS_DENIED = 2; //Permission for app to use location is denied
+    private static final int STATUS_AUTHORIZED = 3; //Permission for app to use location is granted
+    private static final int STATUS_AUTHORIZED_ALWAYS = 3; //Same as STATUS_AUTHORIZED
+    private static final int STATUS_AUTHORIZED_WHENINUSE = 4; //Permission for app to use location when in use is granted
 
-		boolean gpsProviderEnabled = false;
-		boolean networkProviderEnabled = false;
+    private static final int REQUEST_CODE_AUTHORIZATION = 2308;
+    private static final String EVENT_STATUS_CHANGE = "OnStatusChange";
 
-		try {
-			gpsProviderEnabled = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER);
-		} catch (SecurityException ex) {
-		}
+    private boolean isListen = false;
+    private int targetSdkVersion = -1;
+    private int deviceSdkVersion = Build.VERSION.SDK_INT;
+    private int currentStatus = STATUS_NOT_DETERMINED;
 
-		try {
-			networkProviderEnabled = locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
-		} catch (SecurityException ex) {
-		}
+    private BroadcastReceiver mGpsSwitchStateReceiver = null;
+    private LocationManager locationManager;
 
-		//TODO check permission to inform the correct status
-		if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M || targetSdkVersion >= Build.VERSION_CODES.M) {
-			int permission = ActivityCompat.checkSelfPermission(getReactApplicationContext(), Manifest.permission.ACCESS_FINE_LOCATION);
-			boolean isGranted = permission == PackageManager.PERMISSION_GRANTED;
-			if(gpsProviderEnabled || networkProviderEnabled) {
-				if(isGranted){
-					status = STATUS_AUTHORIZED;
-				}else{
-					status = STATUS_DENIED;
-				}
-			}else{
-				status = STATUS_RESTRICTED;
-			}
-		}else{
-			status = (gpsProviderEnabled || networkProviderEnabled ? STATUS_AUTHORIZED : STATUS_RESTRICTED);
-		}
-		
-		return status;
-	}
-	
-	
-	void sendEvent(int status){
-		ReactContext reactContext = getReactApplicationContext();
-		WritableMap params = Arguments.createMap();
-		params.putInt("status", status);
-		
-		reactContext.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class).emit(EVENT_STATUS_CHANGE, params);
-	}
-	
-	/*
-	@Override
-	public void onLocationChanged(Location location) {}
-	
-	@Override
-	public void onStatusChanged(String provider, int status, Bundle extras) {
-		Toast.makeText(getReactApplicationContext(), "onStatusChanged: ["+provider+"]"+status, Toast.LENGTH_LONG).show();
-	}
-	
-	@Override
-	public void onGpsStatusChanged(int event) {
-		Toast.makeText(getReactApplicationContext(), "onGpsStatusChanged: "+event, Toast.LENGTH_LONG).show();
-	}
-	
-	@Override
-	public void onProviderEnabled(String provider) {
-		Toast.makeText(getReactApplicationContext(), "onProviderEnabled: "+provider, Toast.LENGTH_LONG).show();
-	}
-	
-	@Override
-	public void onProviderDisabled(String provider) {
-		Toast.makeText(getReactApplicationContext(), "onProviderDisabled: "+provider, Toast.LENGTH_LONG).show();
-	}
-	
-	@Override
-	public void onActivityResult(Activity activity, int requestCode, int resultCode, Intent data) {
-		int rc = resultCode;
-		Toast.makeText(getReactApplicationContext(), "onActivityResult: "+rc, Toast.LENGTH_LONG).show();
-	}
-	
-	@Override
-	public void onNewIntent(Intent intent) {}
-	*/
-	
-	@Override
-	public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults){
-		if(requestCode==REQUEST_CODE_AUTHORIZATION){
-			int status = STATUS_NOT_DETERMINED;
-			
-			if(grantResults.length>0) {
-				int result = grantResults[0];
-				status = (result == PackageManager.PERMISSION_GRANTED) ? STATUS_AUTHORIZED : STATUS_DENIED;
-			}
-			sendEvent(status);
-		}
-	}
-	
-	private final class GPSProvideChangeReceiver extends BroadcastReceiver {
-		
-		@Override
-		public void onReceive(Context context, Intent intent) {
-			String action = intent.getAction();
-			if (action.matches("android.location.PROVIDERS_CHANGED")) {
-				int status = getGpsState();
-				sendEvent(status);
-			}
-		}
-	}
+    public GPSStateModule(ReactApplicationContext reactContext) {
+        super(reactContext);
+        locationManager = (LocationManager) reactContext.getSystemService(reactContext.LOCATION_SERVICE);
+
+        try {
+            final PackageInfo info = reactContext.getPackageManager().getPackageInfo(reactContext.getPackageName(), 0);
+            targetSdkVersion = info.applicationInfo.targetSdkVersion;
+        } catch (PackageManager.NameNotFoundException e) {
+            e.printStackTrace();
+        }
+    }
+
+    @Override
+    public String getName() {
+        return "GPSState";
+    }
+
+    @Override
+    public Map<String, Object> getConstants() {
+        final Map<String, Object> constants = new HashMap<>();
+        constants.put("NOT_DETERMINED", STATUS_NOT_DETERMINED);
+        constants.put("RESTRICTED", STATUS_RESTRICTED);
+        constants.put("DENIED", STATUS_DENIED);
+        constants.put("AUTHORIZED", STATUS_AUTHORIZED);
+        constants.put("AUTHORIZED_ALWAYS", STATUS_AUTHORIZED_ALWAYS);
+        constants.put("AUTHORIZED_WHENINUSE", STATUS_AUTHORIZED_WHENINUSE);
+        return constants;
+    }
+
+    @ReactMethod
+    void startListen() {
+        stopListen();
+        try {
+            mGpsSwitchStateReceiver = new GPSProvideChangeReceiver();
+            getReactApplicationContext().registerReceiver(mGpsSwitchStateReceiver, new IntentFilter(LocationManager.PROVIDERS_CHANGED_ACTION));
+            isListen = true;
+        } catch (Exception ex) {
+        }
+    }
+
+    @ReactMethod
+    void stopListen() {
+        isListen = false;
+        try {
+            //locationManager.removeGpsStatusListener(this);
+            if (mGpsSwitchStateReceiver != null) {
+                getReactApplicationContext().unregisterReceiver(mGpsSwitchStateReceiver);
+                mGpsSwitchStateReceiver = null;
+            }
+        } catch (Exception ex) {
+        }
+    }
+
+    @ReactMethod
+    void getStatus(Promise promise) {
+        promise.resolve(getGpsState());
+    }
+
+    @ReactMethod
+    void openSettings(boolean openInDetails) {
+        Intent callGPSSettingIntent = new Intent();
+        String packageName = getReactApplicationContext().getPackageName();
+        String intentAction = Settings.ACTION_LOCATION_SOURCE_SETTINGS;
+
+        if (openInDetails && _NativeIsDeviceMOrAbove()) {
+            intentAction = Settings.ACTION_APPLICATION_DETAILS_SETTINGS;
+
+            Uri uri = Uri.fromParts("package", packageName, null);
+            callGPSSettingIntent.setData(uri);
+        }
+
+        callGPSSettingIntent.setAction(intentAction);
+        getCurrentActivity().startActivityForResult(callGPSSettingIntent, 0);
+    }
+
+    @ReactMethod
+    public void requestAuthorization() {
+        if (_NativeIsDeviceMOrAbove()) {
+            String[] permissions = {Manifest.permission.ACCESS_FINE_LOCATION};
+            Activity activity = getCurrentActivity();
+            int requestCode = REQUEST_CODE_AUTHORIZATION;
+
+            if (activity instanceof ReactActivity) {
+                ((ReactActivity) activity).requestPermissions(permissions, requestCode, listener);
+
+            } else if (activity instanceof PermissionAwareActivity) {
+                ((PermissionAwareActivity) activity).requestPermissions(permissions, requestCode, listener);
+
+            } else {
+                ActivityCompat.requestPermissions(activity, permissions, requestCode);
+            }
+        }
+    }
+
+    @ReactMethod
+    void isMarshmallowOrAbove(Promise promise) {
+        promise.resolve(_NativeIsDeviceMOrAbove());
+    }
+
+    boolean _NativeIsDeviceMOrAbove() {
+        return deviceSdkVersion >= Build.VERSION_CODES.M;
+    }
+
+    boolean _NativeIsTargetMOrAbove() {
+        return targetSdkVersion >= Build.VERSION_CODES.M;
+    }
+
+    private PermissionListener listener = new PermissionListener() {
+        public boolean onRequestPermissionsResult(final int requestCode, final String[] permissions, final int[] grantResults) {
+            if (requestCode == REQUEST_CODE_AUTHORIZATION) {
+                sendEvent(getGpsState());
+            }
+
+            return true;
+        }
+    };
+
+    int getGpsState() {
+        int status;
+        boolean gpsProviderEnabled = false;
+        boolean networkProviderEnabled = false;
+
+        try {
+            gpsProviderEnabled = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER);
+        } catch (SecurityException ex) {
+        }
+
+        try {
+            networkProviderEnabled = locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
+        } catch (SecurityException ex) {
+        }
+
+        if (_NativeIsDeviceMOrAbove()) {
+            boolean isGranted = isPermissionGranted();
+
+            if (gpsProviderEnabled || networkProviderEnabled) {
+                if (isGranted) {
+                    status = STATUS_AUTHORIZED;
+                } else {
+                    status = STATUS_DENIED;
+                }
+            } else {
+                status = STATUS_RESTRICTED;
+            }
+        } else {
+            status = (gpsProviderEnabled || networkProviderEnabled ? STATUS_AUTHORIZED : STATUS_RESTRICTED);
+        }
+
+        currentStatus = status;
+        return status;
+    }
+
+    int getPermission() {
+        return ActivityCompat.checkSelfPermission(getReactApplicationContext(), Manifest.permission.ACCESS_FINE_LOCATION);
+    }
+
+    boolean isPermissionGranted() {
+        int permission = getPermission();
+        return permission == PackageManager.PERMISSION_GRANTED;
+    }
+
+    boolean isGpsEnabled() {
+        return locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER);
+    }
+
+    void sendEvent(int status) {
+        ReactContext reactContext = getReactApplicationContext();
+        WritableMap params = Arguments.createMap();
+        params.putInt("status", status);
+
+        reactContext.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class).emit(EVENT_STATUS_CHANGE, params);
+    }
+
+    private final class GPSProvideChangeReceiver extends BroadcastReceiver {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+            if (action.matches("android.location.PROVIDERS_CHANGED")) {
+                sendEvent(getGpsState());
+            }
+        }
+    }
 }
-
